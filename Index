@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>UPH Tracker</title>
+
+  <!-- iPhone / mobile web app settings -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <!-- Chart.js & jsPDF via CDN (no extra files needed for you) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      box-sizing: border-box;
+    }
+    body {
+      padding: 16px;
+      max-width: 600px;
+      margin: auto;
+      transition: background 0.3s, color 0.3s;
+    }
+    /* THEMES */
+    body.light {
+      background: #ffffff;
+      color: #222222;
+    }
+    body.dark {
+      background: #181818;
+      color: #f0f0f0;
+    }
+    body.night {
+      background: #02101f;
+      color: #d9ebff;
+    }
+
+    button, input[type="number"] {
+      width: 100%;
+      padding: 12px;
+      margin: 6px 0;
+      font-size: 16px;
+      border-radius: 6px;
+      border: 1px solid #888;
+      box-sizing: border-box;
+      min-height: 44px;
+      cursor: pointer;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .row > * {
+      flex: 1 1 0;
+    }
+
+    /* Buttons adapt a bit per theme */
+    body.light button {
+      background: #007bff;
+      color: #ffffff;
+    }
+    body.dark button {
+      background: #333333;
+      color: #ffffff;
+    }
+    body.night button {
+      background: #114b76;
+      color: #ffffff;
+    }
+
+    #progressBar {
+      width: 100%;
+      height: 22px;
+      background: #cccccc;
+      border-radius: 11px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    #progressFill {
+      height: 100%;
+      width: 0%;
+      background: #28a745;
+      transition: width 0.3s;
+    }
+
+    canvas {
+      width: 100% !important;
+      height: auto !important;
+    }
+
+    .stat-block {
+      margin-top: 10px;
+      font-size: 15px;
+      line-height: 1.4;
+    }
+
+    h2, h3 {
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body class="light">
+  <h2>Items Per Hour Tracker</h2>
+
+  <!-- SHIFT CONTROL -->
+  <div class="row">
+    <button id="startShiftBtn">Start Shift</button>
+    <button id="stopShiftBtn" style="background:#d9534f;color:#fff;">Stop Shift</button>
+  </div>
+
+  <div id="timeDisplay" style="margin-top:8px;font-size:16px;">
+    Elapsed Time: 0h 0m 0s
+  </div>
+  <div id="exceptionStatus" style="margin-top:4px;color:#ff4d4f;">
+    Exception: None
+  </div>
+
+  <!-- COUNTERS -->
+  <h3>Counters</h3>
+  <div class="row">
+    <input type="number" id="itemsPerPackage" placeholder="Items per package" min="1" value="1" />
+    <button id="addPackageBtn">+1 Package</button>
+  </div>
+  <div class="row">
+    <input type="number" id="itemCount" placeholder="Number of items to add" min="1" />
+    <button id="addItemsBtn">Add Items</button>
+  </div>
+
+  <div class="stat-block">
+    <strong>Packages:</strong> <span id="packages">0</span><br />
+    <strong>Items:</strong> <span id="items">0</span><br />
+    <strong>Items Per Hour (IPH):</strong> <span id="iph">0.0</span><br />
+    <strong>Pace (200 IPH):</strong> <span id="paceLeft">0 items behind pace</span><br />
+    <strong>Pace vs Actual:</strong> <span id="pacePercent">0.0%</span>
+  </div>
+
+  <!-- PROGRESS BAR -->
+  <h3 style="margin-top:18px;">Progress Toward 200 IPH</h3>
+  <div id="progressBar"><div id="progressFill"></div></div>
+
+  <!-- GRAPH -->
+  <h3 style="margin-top:18px;">Performance (Items Per Hour)</h3>
+  <canvas id="hourlyChart"></canvas>
+
+  <!-- EXCEPTIONS -->
+  <h3 style="margin-top:20px;">Exceptions (Pause Time)</h3>
+  <div class="row">
+    <button class="exBtn" data-ex="Bathroom">Bathroom</button>
+    <button class="exBtn" data-ex="Missing Item">Missing Item</button>
+  </div>
+  <div class="row">
+    <button class="exBtn" data-ex="Andon Help">Andon Help</button>
+    <button class="exBtn" data-ex="Supplies">Supplies</button>
+  </div>
+  <button class="exBtn" data-ex="Troubleshooting">Troubleshooting</button>
+  <button id="endExceptionBtn" style="background:#d9534f;color:#fff;">End Exception</button>
+
+  <!-- THEME -->
+  <h3 style="margin-top:20px;">Theme</h3>
+  <div class="row">
+    <button onclick="setTheme('light')">Light</button>
+    <button onclick="setTheme('dark')">Dark</button>
+    <button onclick="setTheme('night')">Night Shift</button>
+  </div>
+
+  <!-- EXPORT -->
+  <h3 style="margin-top:20px;">Export</h3>
+  <div class="row">
+    <button id="exportCSVBtn">Export Activity Log (CSV)</button>
+  </div>
+  <div class="row">
+    <button id="exportSummaryCSVBtn">Export Summary (CSV)</button>
+    <button id="exportSummaryPDFBtn">Export Summary (PDF)</button>
+  </div>
+
+  <script>
+    // ---------- STATE ----------
+    let packages = 0;
+    let items = 0;
+    let events = [];
+
+    let shiftStart = null;
+    let shiftTimer = null;
+
+    let exceptionStart = null;
+    let currentException = null;
+
+    const $ = id => document.getElementById(id);
+
+    // ---------- THEME ----------
+    function setTheme(t) {
+      document.body.className = t;
+      localStorage.setItem('uphTheme', t);
+    }
+    (function restoreTheme() {
+      const saved = localStorage.getItem('uphTheme');
+      if (saved) document.body.className = saved;
+    })();
+
+    // ---------- TIME / EFFECTIVE MS ----------
+    function getEffectiveMs(now = new Date()) {
+      if (!shiftStart) return 0;
+      let total = now - shiftStart;
+
+      // Subtract all recorded exception durations
+      events.forEach(e => {
+        if (e.type === 'EX_END') {
+          try {
+            const d = JSON.parse(e.details);
+            if (d.durationMs) total -= d.durationMs;
+          } catch {}
+        }
+      });
+
+      // Subtract currently running exception
+      if (exceptionStart) {
+        total -= (now - exceptionStart);
+      }
+      return Math.max(total, 0);
+    }
+
+    // ---------- UPDATE UI ----------
+    function updateAll() {
+      const now = new Date();
+      const ms = getEffectiveMs(now);
+      const sec = Math.floor(ms / 1000);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      $('timeDisplay').innerText = `Elapsed Time: ${h}h ${m}m ${s}s`;
+
+      const hours = ms / 1000 / 3600;
+      const iph = hours > 0 ? items / hours : 0;
+      $('iph').innerText = iph.toFixed(1);
+
+      const paceItems = 200 * hours;
+      const behind = Math.max(Math.ceil(paceItems - items), 0);
+      $('paceLeft').innerText = `${behind} items behind pace`;
+
+      const pct = paceItems > 0 ? Math.min((items / paceItems) * 100, 100) : 0;
+      $('pacePercent').innerText = pct.toFixed(1) + '%';
+
+      const prog = Math.min((iph / 200) * 100, 100);
+      $('progressFill').style.width = prog.toFixed(1) + '%';
+
+      updateGraph(ms, iph);
+    }
+
+    // ---------- SHIFT ----------
+    $('startShiftBtn').onclick = () => {
+      if (shiftStart) return;
+      shiftStart = Date.now();
+      events.push({ time: shiftStart, type: 'SHIFT_START' });
+      shiftTimer = setInterval(updateAll, 1000);
+      updateAll();
+    };
+
+    $('stopShiftBtn').onclick = () => {
+      if (!shiftStart) return;
+      clearInterval(shiftTimer);
+      shiftTimer = null;
+      events.push({ time: Date.now(), type: 'SHIFT_STOP' });
+      shiftStart = null;
+      updateAll();
+    };
+
+    // ---------- ADD PACKAGE / ITEMS ----------
+    $('addPackageBtn').onclick = () => {
+      if (!shiftStart) { alert('Start shift first.'); return; }
+      let per = parseInt($('itemsPerPackage').value, 10);
+      if (!per || per < 1) per = 1;
+      packages++;
+      items += per;
+      events.push({ time: Date.now(), type: 'ADD_PACKAGE', details: per });
+      $('packages').innerText = packages;
+      $('items').innerText = items;
+      updateAll();
+    };
+
+    $('addItemsBtn').onclick = () => {
+      if (!shiftStart) { alert('Start shift first.'); return; }
+      const cnt = parseInt($('itemCount').value, 10);
+      if (!cnt || cnt < 1) { alert('Enter a positive number of items.'); return; }
+      items += cnt;
+      events.push({ time: Date.now(), type: 'ADD_ITEMS', details: cnt });
+      $('items').innerText = items;
+      updateAll();
+    };
+
+    // ---------- EXCEPTIONS ----------
+    document.querySelectorAll('.exBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.ex;
+        startException(name);
+      });
+    });
+
+    function startException(name) {
+      if (!shiftStart) { alert('Start shift first.'); return; }
+      if (exceptionStart) return; // already in an exception
+      exceptionStart = Date.now();
+      currentException = name;
+      events.push({ time: exceptionStart, type: 'EX_START', details: name });
+      $('exceptionStatus').innerText = 'Exception: ' + name;
+    }
+
+    $('endExceptionBtn').onclick = () => {
+      if (!exceptionStart) return;
+      const now = Date.now();
+      const dur = now - exceptionStart;
+      events.push({
+        time: now,
+        type: 'EX_END',
+        details: JSON.stringify({ name: currentException, durationMs: dur })
+      });
+      exceptionStart = null;
+      currentException = null;
+      $('exceptionStatus').innerText = 'Exception: None';
+      updateAll();
+    };
+
+    // ---------- GRAPH (Chart.js) ----------
+    const ctx = document.getElementById('hourlyChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Items/hour',
+          data: [],
+          borderWidth: 2,
+          fill: false,
+          tension: 0.2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: 'Minutes (effective)' } },
+          y: { title: { display: true, text: 'IPH' } }
+        }
+      }
+    });
+
+    function updateGraph(ms, iph) {
+      if (!shiftStart) return;
+      const mins = Math.floor(ms / 60000);
+      const lastLabel = chart.data.labels[chart.data.labels.length - 1];
+      if (chart.data.labels.length === 0 || lastLabel !== mins.toString()) {
+        chart.data.labels.push(mins.toString());
+        chart.data.datasets[0].data.push(parseFloat(iph.toFixed(1)));
+        chart.update();
+      }
+    }
+
+    // ---------- CSV EXPORT ----------
+    function downloadCSV(filename, rows) {
+      const csv = rows.map(r =>
+        r.map(cell => {
+          const s = String(cell ?? '').replace(/"/g, '""');
+          return `"${s}"`;
+        }).join(',')
+      ).join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    $('exportCSVBtn').onclick = () => {
+      const rows = [['timestamp', 'event', 'details']];
+      events.forEach(e => {
+        rows.push([
+          new Date(e.time).toLocaleString(),
+          e.type,
+          e.details ?? ''
+        ]);
+      });
+      downloadCSV('UPH_ActivityLog.csv', rows);
+    };
+
+    $('exportSummaryCSVBtn').onclick = () => {
+      const ms = getEffectiveMs();
+      const hrs = ms / 1000 / 3600;
+      const iph = hrs > 0 ? items / hrs : 0;
+      const left = Math.max(Math.ceil(200 * hrs - items), 0);
+
+      const rows = [
+        ['metric', 'value'],
+        ['Packages', packages],
+        ['Items', items],
+        ['Hours Worked', hrs.toFixed(2)],
+        ['IPH', iph.toFixed(2)],
+        ['Items Behind Pace', left]
+      ];
+      downloadCSV('UPH_Summary.csv', rows);
+    };
+
+    // ---------- PDF EXPORT (jsPDF) ----------
+    $('exportSummaryPDFBtn').onclick = () => {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      const now = new Date();
+      const ms = getEffectiveMs();
+      const hrs = ms / 1000 / 3600;
+      const iph = hrs > 0 ? items / hrs : 0;
+      const left = Math.max(Math.ceil(200 * hrs - items), 0);
+
+      doc.setFontSize(18);
+      doc.text('UPH Summary Report', 14, 16);
+
+      doc.setFontSize(12);
+      doc.text(`Date: ${now.toLocaleString()}`, 14, 28);
+
+      doc.text('Summary:', 14, 42);
+      doc.text(`• Packages: ${packages}`, 20, 52);
+      doc.text(`• Items: ${items}`, 20, 60);
+      doc.text(`• Hours Worked: ${hrs.toFixed(2)}`, 20, 68);
+      doc.text(`• IPH: ${iph.toFixed(2)}`, 20, 76);
+      doc.text(`• Items Behind Pace: ${left}`, 20, 84);
+
+      // Exceptions
+      doc.text('Exceptions:', 14, 100);
+      let y = 110;
+      const exTotals = {};
+      events.forEach(e => {
+        if (e.type === 'EX_END') {
+          try {
+            const d = JSON.parse(e.details);
+            exTotals[d.name] = (exTotals[d.name] || 0) + d.durationMs;
+          } catch {}
+        }
+      });
+
+      if (Object.keys(exTotals).length === 0) {
+        doc.text('No exceptions recorded.', 20, y);
+      } else {
+        for (const name in exTotals) {
+          const secs = Math.round(exTotals[name] / 1000);
+          doc.text(`• ${name}: ${secs} sec`, 20, y);
+          y += 8;
+        }
+      }
+
+      doc.save('UPH_Summary.pdf');
+    };
+  </script>
+</body>
+</html>
